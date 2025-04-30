@@ -7,7 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Windows.Forms;
 
-namespace TestCaseExport
+namespace TFSTestRunExport
 {
     public partial class FrmHelp : Form
     {
