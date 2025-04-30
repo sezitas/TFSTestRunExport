@@ -266,6 +266,9 @@ namespace TFSTestRunExport
             (xlWorkSheet.Columns["H", Type.Missing]).ColumnWidth = 30;
             (xlWorkSheet.Columns["I", Type.Missing]).ColumnWidth = 30;
 
+            Stopwatch querySW = new Stopwatch();
+            querySW.Start();
+
             WorkItemStore workItemStore = (WorkItemStore)_tfs.GetService(typeof(WorkItemStore));
 
             var allResults = _teamProject.TestResults
@@ -274,6 +277,9 @@ namespace TFSTestRunExport
                     "WHERE TestResult.TestPlanId = " + plan.Id
                 )
                 .ToLookup(r => r.TestCaseId);
+
+            querySW.Stop();
+            Console.WriteLine("Query Time Elapsed={0}", querySW.Elapsed);
 
             foreach (ITestCase testCase in testCases)
             {
@@ -285,6 +291,8 @@ namespace TFSTestRunExport
 
                 var testResultHistory = allResults[testCase.Id];
 
+                Stopwatch bugSW = new Stopwatch();
+                bugSW.Start();
                 if (testResultHistory.Count() == 0)
                 {
                     finalOutcome = "Not Run";
@@ -294,6 +302,8 @@ namespace TFSTestRunExport
                 {
                     foreach (ITestCaseResult result in testResultHistory)
                     {
+                        bugSW.Stop();
+                        Console.WriteLine("Get Next Result Time: " + bugSW.Elapsed);
 
                         String rez = removehtmltags(result.Outcome.ToString());
                         xlWorkSheet.Cells[row, 4] = i;
@@ -339,12 +349,14 @@ namespace TFSTestRunExport
                         }
                         row++;
                         i++;
+                        bugSW.Start();
                     }
 
                     finalOutcome = testResultHistory
                         .ElementAt(testResultHistory.Count() - 1)
                         .Outcome.ToString();
                 }
+                bugSW.Stop();
                 #endregion
 
                 lowerBound = (row - 1);
@@ -520,7 +532,7 @@ namespace TFSTestRunExport
                     comBoxTestPlan.Enabled = true;
                     txtFileName.Text = "";
                     mainStopWatch.Stop();
-                    MessageBox.Show("Test Cases exported successfully to specified file\n. " + mainStopWatch.Elapsed.ToString(), "Success", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
+                    MessageBox.Show("Test Cases exported successfully to specified file. " + mainStopWatch.Elapsed.ToString(), "Success", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
 
                     Console.WriteLine("Main Time Elapsed={0}", mainStopWatch.Elapsed);
                 }
