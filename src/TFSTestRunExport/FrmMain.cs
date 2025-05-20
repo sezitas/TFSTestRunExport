@@ -12,6 +12,7 @@ using System.Linq;
 using System.Diagnostics;
 using System.Runtime.Remoting.Messaging;
 using Microsoft.Office.Interop.Excel;
+using Microsoft.TeamFoundation.TestManagement.WebApi;
 
 namespace TFSTestRunExport
 {
@@ -38,7 +39,27 @@ namespace TFSTestRunExport
         int sheetcount;
         string Sname;
         String unfixedBugs = "";
+        private Dictionary<string, int> testMetrics = new Dictionary<string, int>() {
+            { "Total", 0 },
+            { "Executed", 0 },
+            { "Passed", 0 },
+            { "Failed", 0 }
+        };
+        
+        private Dictionary<string, HashSet<int>> bugMetrics = new Dictionary<string, HashSet<int>>() {
+            { "Fixed", new HashSet<int>() },
+            { "Deferred", new HashSet<int>() }
+        };
 
+        private void resetMetrics() {
+            testMetrics["Total"] = 0;
+            testMetrics["Executed"] = 0;
+            testMetrics["Passed"] = 0;
+            testMetrics["Failed"] = 0;
+
+            bugMetrics["Fixed"] = new HashSet<int>();
+            bugMetrics["Deferred"] = new HashSet<int>();
+        }
 
         private delegate void Execute();
 
@@ -287,6 +308,8 @@ namespace TFSTestRunExport
                 String finalOutcome = "";
                 upperBound = row;
 
+                testMetrics["Total"]++;
+
                 #region ExportResults
 
                 var testResultHistory = allResults[testCase.Id];
@@ -333,11 +356,12 @@ namespace TFSTestRunExport
                                     string bug = "#" + linkIter;
                                     bugs += bug + ", ";
 
-                                    if(workItemBug.State != "Done" 
-                                        && workItemBug.State != "Removed" 
-                                        && !unfixedBugs.Contains(bug))
-                                    {
+                                    if (workItemBug.State == "Done") {
+                                        bugMetrics["Fixed"].Add(workItemBug.Id);
+                                    } else if (workItemBug.State != "Removed" 
+                                            && !unfixedBugs.Contains(bug)) {
                                         unfixedBugs += (unfixedBugs.Equals("")) ? bug : ", " + bug;
+                                        bugMetrics["Deferred"].Add(workItemBug.Id);
                                     }
                                 }
                             }
@@ -355,6 +379,17 @@ namespace TFSTestRunExport
                     finalOutcome = testResultHistory
                         .ElementAt(testResultHistory.Count() - 1)
                         .Outcome.ToString();
+                    switch (finalOutcome) {
+                        case "Passed":
+                            testMetrics["Executed"]++;
+                            testMetrics["Passed"]++;
+                            break;
+                        case "Failed":
+                            testMetrics["Executed"]++;
+                            testMetrics["Failed"]++;
+                            break;
+                    }
+
                 }
                 bugSW.Stop();
                 #endregion
@@ -405,6 +440,23 @@ namespace TFSTestRunExport
 
         private void exportmultisheet(ITestSuiteBase itsb, Excel.Workbook xlBook)
         {
+            // count bugs that are represented by Requirement Test Suites
+            if (itsb.TestSuiteType == TestSuiteType.RequirementTestSuite) 
+            {
+                var reqSuite = itsb as IRequirementTestSuite;
+                if (reqSuite != null && reqSuite.RequirementId > 0)
+                {
+                    WorkItem linkedItem = _store.GetWorkItem(reqSuite.RequirementId);
+                    if (linkedItem.Type.Name.Equals("Bug", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (linkedItem.State == "Done")
+                            bugMetrics["Fixed"].Add(linkedItem.Id);
+                        else if (linkedItem.State != "Removed")
+                            bugMetrics["Deferred"].Add(linkedItem.Id);
+                    }
+                }
+            }
+
             bool testcasefound = false;
             foreach (ITestSuiteEntry tse in itsb.TestCases)
             {
@@ -494,6 +546,7 @@ namespace TFSTestRunExport
                     if (suite1.TestSuiteType.ToString() == "StaticTestSuite")
                     {
                         testCases.Clear();
+                        resetMetrics();
                         exportmultisheet(suite1, xlWorkBook);
                     }
                 }
@@ -503,15 +556,13 @@ namespace TFSTestRunExport
                     xlWorkSheet.Name = formatsheetname(suite1.Title);
                     if (testCases.Count > 0)
                     {
+                        resetMetrics();
                         export(xlWorkSheet, testCases);
                         testCases.Clear();
                     }
                 }
 
-                // add sheet for unfixed bugs
-                Excel.Worksheet unfixedBugsSheet = (Excel.Worksheet) xlWorkBook.Sheets.Add(xlWorkBook.Sheets[1], Type.Missing, Type.Missing, Type.Missing);
-                unfixedBugsSheet.Name = "UNFIXED BUGS!";
-                unfixedBugsSheet.Cells[1, 1] = unfixedBugs;
+                createTestReportDetailsSheet();
 
                 // save excel file
                 try
@@ -551,6 +602,129 @@ namespace TFSTestRunExport
             {
                 MessageBox.Show("All fields are not populated.", "Missing Information", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
             }
+        }
+
+        private void createTestReportDetailsSheet()
+        {
+            Excel.Worksheet sheet = (Excel.Worksheet)xlWorkBook.Sheets.Add(xlWorkBook.Sheets[1], Type.Missing, Type.Missing, Type.Missing);
+            sheet.Name = "Test Report Details!";
+
+            sheet.Cells.Font.Name = "Calibri";
+            sheet.Cells.Font.Size = 11;
+
+            sheet.Columns["A"].ColumnWidth = 34;
+            sheet.Columns["B"].ColumnWidth = 60;
+            sheet.Columns["C"].ColumnWidth = 11;
+            sheet.Columns["D"].ColumnWidth = 16;
+            sheet.Columns["E"].ColumnWidth = 41;
+
+            Excel.Range colB = (Excel.Range)sheet.Columns["B"];
+            Excel.Range colE = (Excel.Range)sheet.Columns["E"];
+            colB.HorizontalAlignment = Excel.XlHAlign.xlHAlignLeft;
+            colE.HorizontalAlignment = Excel.XlHAlign.xlHAlignLeft;
+
+            // Test Report Details section
+            var titleCell = (Excel.Range)sheet.Cells[1, 1];
+            titleCell.Value2 = "Test Report Details";
+            titleCell.Font.Bold = true;
+            titleCell.Font.Italic = true;
+            titleCell.Font.Underline = true;
+            titleCell.Font.Size = 12;
+
+            var detailsLabels = new[]
+            {
+            Tuple.Create(3, "Product:"),
+            Tuple.Create(4, "Tested release:"),
+            Tuple.Create(5, "Date:"),
+            Tuple.Create(6, "Test plan:"),
+            Tuple.Create(7, "Tested by:"),
+            Tuple.Create(8, "Test environment:")
+            };
+
+            foreach (var lbl in detailsLabels)
+            {
+                var cell = (Excel.Range)sheet.Cells[lbl.Item1, 1];
+                cell.Value2 = lbl.Item2;
+                cell.Font.Bold = true;
+            }
+
+            // Approval Section
+            var approvalCell = (Excel.Range)sheet.Cells[1, 4];
+            approvalCell.Value2 = "Approval";
+            approvalCell.Font.Bold = true;
+            approvalCell.Font.Italic = true;
+            approvalCell.Font.Underline = true;
+            approvalCell.Font.Size = 12;
+
+            var approvalLabels = new[]
+            {
+            Tuple.Create(3, "Approved by:"),
+            Tuple.Create(4, "Date:")
+            };
+            foreach (var lbl in approvalLabels)
+            {
+                var cell = (Excel.Range)sheet.Cells[lbl.Item1, 4];
+                cell.Value2 = lbl.Item2;
+                cell.Font.Bold = true;
+                cell.Font.Size = 11;
+            }
+
+            // Summary section
+            var summaryCell = (Excel.Range)sheet.Cells[10, 1];
+            summaryCell.Value2 = "Test Report Summary";
+            summaryCell.Font.Bold = true;
+            summaryCell.Font.Italic = true;
+            summaryCell.Font.Underline = true;
+            summaryCell.Font.Size = 12;
+
+            var summaryLabels = new[] {
+                Tuple.Create(12, "Functional and regression test cases"),
+                Tuple.Create(13, "Total:"),
+                Tuple.Create(14, "Executed:"),
+                Tuple.Create(15, "Passed:"),
+                Tuple.Create(16, "Failed:"),
+                
+                Tuple.Create(18, "Integration and Unit tests"),
+                Tuple.Create(19, "Total:"),
+                Tuple.Create(20, "Executed:"),
+                Tuple.Create(21, "Passed:"),
+                Tuple.Create(22, "Failed:"),
+                
+                Tuple.Create(24, "Bugs"),
+                Tuple.Create(25, "Identified:"),
+                Tuple.Create(26, "Fixed:"),
+                Tuple.Create(27, "Deffered:"),
+                Tuple.Create(28, "List of not fixed bugs:")
+            };
+
+            foreach (var lbl in summaryLabels)
+            {
+                var cell = (Excel.Range)sheet.Cells[lbl.Item1, 1];
+                cell.Value2 = lbl.Item2;
+                if(new[] { 12, 18, 24, 28}.Contains(lbl.Item1))
+                    cell.Font.Bold = true;
+            }
+
+            // Add metrics values
+            var metrics = new[]
+            {
+                Tuple.Create(13 , testMetrics["Total"]),
+                Tuple.Create(14 , testMetrics["Executed"]),
+                Tuple.Create(15 , testMetrics["Passed"]),
+                Tuple.Create(16 , testMetrics["Failed"]),
+
+                Tuple.Create(25 , bugMetrics["Fixed"].Count() + bugMetrics["Deferred"].Count()),
+                Tuple.Create(26 , bugMetrics["Fixed"].Count()),
+                Tuple.Create(27 , bugMetrics["Deferred"].Count())
+            };
+            
+            foreach (var mt in metrics)
+            {
+                var cell = (Excel.Range)sheet.Cells[mt.Item1, 2];
+                cell.Value2 = mt.Item2;
+            }
+
+            sheet.Cells[28, 2] = string.Join(", ", bugMetrics["Deferred"]);
         }
 
         private void releaseObject(object obj)
