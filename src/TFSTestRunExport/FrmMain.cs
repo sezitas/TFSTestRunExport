@@ -196,16 +196,19 @@ namespace TFSTestRunExport
 
         private string formatsheetname(string str)
         {
-            str = str.Replace("/", "");
-            str = str.Replace("\\", "");
-            str = str.Replace(":", "");
-            str = str.Replace("?", "");
-            str = str.Replace("[", "");
-            str = str.Replace("]", "");
-            str = str.Replace("*", "");
+            if (string.IsNullOrWhiteSpace(str))
+                return "Sheet";
+
+            str = Regex.Replace(str, @"[\\/:?\[\]*]", "");
+            str = str.Trim('\'');
 
             if (str.Length > 30)
                 str = str.Substring(0, 30);
+
+            str = str.TrimEnd('\'');
+
+            if (str.Length == 0)
+                str = "Sheet";
 
             return str;
         }
@@ -496,8 +499,7 @@ namespace TFSTestRunExport
 
                     }
                 }
-                if (Sname.Length > 30)
-                { Sname = Sname.Substring(0, 30); }
+                Sname = formatsheetname(Sname);
                 xlWorkSheet.Name = Sname;
 
                 export(xlWorkSheet, testCases);
